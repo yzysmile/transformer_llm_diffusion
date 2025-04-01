@@ -1,0 +1,8 @@
+第六章
+Tensorrt模型 构建与推理
+1.Tensorrt是NVIDIA开发的一个高性能的深度学习推理(Inference)优化器和运行的引擎
+
+2.使用TensorRT生成模型的两种方式
+(1) 直接通过TensorRT的API逐层搭建网络；(Python和C++两种方式构建TensorRT模型，并将生成的模型进行推理）
+(2) 将ONNX模型转换成TensorRT模型。
+

@@ -1,0 +1,68 @@
+第七章
+Tensorrt自定义插件(Plugin)
+自定义插件是很多推理框架支持用户自定义算子的方式，以 MMDeploy 为例，它是一个支持多种推理后端（e.g. 微软的ONNXRUNTIME、Nvidia的TensorRT、英特尔的openvino、腾讯的ncnn、华为的CANN）的算法库
+ONNXRUNTIME、TensorRT和ncnn均实现了一些自定义算子，如何给后端自定义算子是一件相对复杂的事情，所以本文只针对TensorRT推理后端 介绍自定义算子。
+
+功能：
+· 以.so的形式插入到网络中实现某些算子
+· 实现TensorRT不原生支持的层或结构
+· 替换性能不足的层或结构
+· 手动合并TensorRT 没有自动融合的层或结构
+
+TensorRT 自带的Plugin及说明：
+https://github.com/NVIDIA/TensorRT/tree/main/plugin
+
+遇到TensorRT不支持的节点
+· 修改源模型
+· 修改Onnx计算图（onnx-graphsurgeon）
+· TensorRT中实现Plugin
+
+# 在此以之前的 超分辨模型SRCNN为例，之前的例子中，我们用ONNXRuntime作为后端，通过PyTorch的 symbolic函数 导出了一个支持 动态scale的ONNX模型，该模型可直接用ONNXRuntime运行
+# 这是因为NewInterpolate类导出的节点 Resize 就是ONNXRuntime支持的节点
+# 在此尝试将srcnn3.onnx转换到TensorRT
+
+自定义Plugin的缺点
+· 需实现CUDA C++ kernel，为结果和性能负责
+· Plugin 与 其他Layer之间无法fusing
+· 可能在Plugin节点前后插入 reformatting节点，增加开销
+
+实现自定义Plugin的关键问题
+· 实现一个Plugin需要写哪些类 和 函数?
+· 如何把自定义Plugin接到TensorRT网络中?     要怎么包装kernel以便TensorRT识别
+· TensorRT如何参与自定义Plugin的资源管理?   两者之间要交换些什么信息
+  · 构建期
+   · TensorRT向Plugin传输 参数和权重
+   · Plugin向TensorRT报告其 输入、输出张量信息，包括数量、形状(Shape)、数据类型(DataType)和数据排布（Layout）组合
+   · Plugin向TensorRT报告其需要的workspace大小
+   · TensorRT尝试各种允许的组合，选择性能最佳的输入输出组合(可能在Plugin前后插入reformat节点)
+   · Plugin不参与层fusing
+  · 运行期
+   · TensorRT为Plugin提供 输入输出张量的地址，workspace地址 及 所在的stream
+
+· 自定义Plugin能不能序列化到.plan中?
+· 自定义Plugin的扩展特性？     FP16/INT8, Dynamic Shape, data-dependent-shape, ...
+· 自定义Plugin与原生Layer相比性能怎么样?
+
+tensorRT实现Plugin的步骤(非mmdeploy实现自定义Plugin)
+· 继承IPluginV2DynamicExt类 实现一个Plugin类
+· 继承IPluginCreator类 实现一个PluginCreator类
+
+· 实现用于计算的CUDA C++ kernel
+· 将自定义Plugin编译为.so保存
+
+· 在TensorRT中加载和使用自定义Plugin
+ · 加载编译好的 .so
+ · 在 Plugin Registry中找到需要的Plugin
+ · 通过 Plugin Creator构造需要的Plugin
+ · 将Plugin插入网络中
+ · Parser自动识别
+
+Parser 和 Plugin结合使用
+· 使用Netron分析原始的.onnx文件中需要替换的模块
+· 使用onnx-graphsurgeon修改.onnx替换新节点
+· 实现相应的Plugin做好单元测试
+· 在TensorRT中加载修改后的 .onnx和Plugin
+· 对比加载前后的计算精度和性能表现
+
+
+操作很多且花费内存拷贝时间

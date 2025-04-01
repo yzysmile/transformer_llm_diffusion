@@ -1,0 +1,13 @@
+第四章
+在 PYTORCH 中支持更多 ONNX 算子，了解如何在原生算子（包括PyTorch原生算子 和 ONNX原生算子）表达能力不足时，为 PyTorch 或 ONNX 自定义算子
+
+case1: PyTorch算子的实现在ATen库中存在，onnx中有对应的onnx算子实现，只缺少 PyTorch算子 到 onnx算子 的映射
+       验证Pytorch模型 与 ONNX模型的正确性
+
+       需要获得PyTorch算子在ATen库中的接口，在torch/_C/_VariableFunctions.pyi 和 torch/nn/functional.pyi 中搜索PyTorch算子名
+
+case2: PyTorch算子没有现成的实现（PyTorch 官方推荐的一种做法是添加 TorchScript 算子），这时考虑自定义一个 PyTorch 算子，再把它转换到ONNX中了。
+       （在chapter4中只是实现了 自定义ONNX算子且没有对自定义的ONNX算子进行实现）
+
+
+case3: 学习一种简单的为 PyTorch 添加 C++ 算子实现的方法，来代替较为复杂的新增 TorchScript 算子。

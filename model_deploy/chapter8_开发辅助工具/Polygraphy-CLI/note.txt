@@ -1,0 +1,14 @@
+Run模式 常用选项
+ --model-type 
+ --verbose
+ --trt --tf --onnxrt
+ --input-shapes "x:[4, 1, 28, 28]" "y:[4, 8]"
+ 
+ inspect模式
+ 
+ 
+ 
+ surgeon模式
+ 
+ 
+ 

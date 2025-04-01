@@ -1,0 +1,16 @@
+第五章 ONNX模型的修改与调试
+1.ONNX 模型在底层是用什么格式存储的？
+答:使用Google的Protocol Buffers(protobuf)格式存储。
+   ONNX模型是一个“计算图”，自下而上包含:
+   ValueInfoProto, NodeProto, GraphProto, ModelProto
+
+2.如何不依赖深度学习框架，只用 ONNX 的 API 来构造一个 ONNX 模型？
+答: ValueInfoProto  onnx.helper.make_tensor_value_info(张量名, 张量元素的数据类型, 张量形状)
+    NodeProto       onnx.helper.make_node(算子类型, 输入的张量名, 输出的张量名)
+    GraphProto      onnx.helper.make_graph(节点名， 图名， 输入张量， 输出张量)，其中 节点名 是有序的。
+    ModelProto      onnx.helper.make_model(图)
+
+3.如果没有源代码，只有一个 ONNX 模型，该如何对这个模型进行调试？
+答:利用ONNX提供的子模型提取(extract)功能，将一个完整的ONNX模型拆分成数个子模型，以验证每个子模型输出的正确性，对ONNX模型进行调试；
+
+   onnx.utils.extract_model(完整的ONNX模型名，子模型名，输入的张量（边）序号，输出的（边）张量序号)

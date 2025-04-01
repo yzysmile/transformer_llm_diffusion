@@ -1,0 +1,4 @@
+第三章  PYTORCH 转 ONNX 详解
+1. torch.onnx.export 细解
+
+2. PyTorch算子 与 ONNX算子 的兼容问题
