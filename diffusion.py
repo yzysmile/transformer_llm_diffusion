@@ -8,7 +8,7 @@ from multiprocessing import  cpu_count  # 获取当前机器的CPU核心数
 
 import torch
 from numpy.ma.core import remainder
-from pyparsing import alphas
+# from pyparsing import alphas
 from sympy.geometry.entity import scale
 from torch import nn, einsum  # einsum 用于爱因斯坦求和
 import torch.nn.functional as F  # 提供常用函数式神经网络操作，如卷积、池化等
@@ -43,7 +43,7 @@ def linear_beta_schedule(timesteps):
     """
     定义beta参数 在每个时间步的取值
     """
-    scale = 1000/timesteps  # 用timesteps对原始范围进行缩放
+    scale = 1000/timesteps  # 用timesteps对原始范围进行缩放，当timesteps为1000时，scale为1
     beta_start = scale * 0.0001  # 线性Beta的开始值
     beta_end = scale * 0.02  # 线性Beta的结束值
     return torch.linspace(beta_start, beta_end, timesteps, dtype=torch.float64)
@@ -54,9 +54,9 @@ def extract(a, t, x_shape):
     从向量a中取出时间步t对应的值，并reshape成x_shape
     """
     b, *_ = t.shape  # 获取batch大小，并忽略batch之后的所有维度
-    out = a.gather(-1, t)  # 在a的最后一个维度上根据 t 提取对应的值
+    out = a.gather(-1, t)  #  从 `a`的最后一个维度中 提取 `t` 指定的索引值
     return out.reshape(b, *((1,) * (len(x_shape) - 1)))
-    # reshape 成 (b, 1, 1, ... ,1) 的形式
+    # reshape 成 (b, 1, 1, ... ,1) 的形式 以广播到 (batch_size, C, H, W)
 
 class Dataset(Dataset):
     """
@@ -94,7 +94,7 @@ def default(val, d):
     if exists(val):
         return val
     return d() if callable(d) else d
-    # 检查给定的参数 val 是否存在（即是否为有效值），如果 val 存在，则返回 val；否则，根据 d 的类型返回相应的默认值
+    # 检查给定的参数 val 是否存在（即是否为有效值），如果 val 存在，则返回 val；否则，根据 d 的类型返回相应的值
     # print(default(5, 10))  # 输出: 5
     # print(default(None, 10))  # 输出: 10
     # print(default(None, lambda: 10 + 5))  # 输出: 15
@@ -142,6 +142,16 @@ class Residual(nn.Module):
     def forward(self, x, *args, **kwargs):
         return self.fn(x, *args, **kwargs) + x
         # 前向传播时，将输入x经过self.fn，再加回原始x实现残差结构
+            # 在深层网络中，梯度可能会因反向传播时的连乘效应而消失，残差连接能够让梯度更容易传播
+            # 跳跃连接（skip connection），网络可以更快地收敛，而不是像传统网络那样学习完整的变换
+
+        # *args: 向函数传入 任意数量位置参数，并把这些参数打包进一个元组(tuple)。
+        # **kwargs: 向函数传入 多个关键字参数，它会将这些参数打包成一个字典（dict）。
+
+        # e.g. def demo_function(a, b, *args, **kwargs):
+        #          ...
+        #      demo_function(1, 2, 3, 4, 5, name="Alice", age=30)
+        #           参数分配为: a = 1  b = 2; args = (3, 4, 5); kwargs = {'name': 'Alice', 'age': 30}
 
 def Upsample(dim, dim_out = None):
     return nn.Sequential(
@@ -155,6 +165,8 @@ def Upsample(dim, dim_out = None):
 def Downsample(dim, dim_out = None):
     return nn.Sequential(
         Rearrange('b c (h p1) (w p2) -> b (c p1 p2) h w', p1 = 2, p2 = 2),
+        # 允许使用简洁的字符串表达式重排张量维度，不需要重写reshape、permute、view等操作
+        # Rearrange('输入格式 -> 输出格式', 参数1=值1, 参数2=值2, ...)
         nn.Conv2d(dim * 4, default(dim_out, dim), 1)
     )
     # 下采样模块：
@@ -177,12 +189,15 @@ class WeightStandardizedConv2d(nn.Conv2d):
 
         weight = self.weight
         mean = reduce(weight, 'o ... -> o 1 1 1', 'mean')
-        # 'o ... -> o 1 1 1'：表示将输入张量的第一个维度保留，其余维度保留均值
+        # 'o ... -> o 1 1 1'：
+        # 输入张量的第一个维度保留，'...' 代表剩余的所有维度（a, b, c）；1 1 1 说明 a, b, c 维度都被聚合（求均值）
         # 'mean'：表示在缩减过程中计算均值。
 
-        var = reduce(weight, 'o ... -> o 1 1 1', partial(torch.var, unbias = False))
+        var = reduce(weight, 'o ... -> o 1 1 1', partial(torch.var, unbiased=False))
         # 计算卷积核再输出通道维度o上的 均值mean 和 方差var
         # partial(torch.var, unbiased=False)：使用 torch.var 函数计算方差，并设置 unbiased=False 以确保计算的是有偏估计。
+         # 有偏估计(biased): 用'n'作为分母
+         # 无偏估计(unbiased): 用‘n-1’作为分母
 
         normalized_weight = (weight - mean) * (var + eps).rsqrt()
         # 对卷积核进行标准化
@@ -190,6 +205,8 @@ class WeightStandardizedConv2d(nn.Conv2d):
         return F.conv2d(x, normalized_weight, self.bias, self.stride, self.padding,
                         self.dilation, self.groups)
         # 得到标准化后的卷积操作
+        # x——输入张量； normalized_weight——卷积核； self.bias——偏置项； self.stride——步长； self.padding——填充；
+        # self.dilation——空洞卷积； self.groups——卷积组数
 
 class LayerNorm(nn.Module):
     def __init__(self, dim):
@@ -202,8 +219,11 @@ class LayerNorm(nn.Module):
         var = torch.var(x, dim = 1, unbiased = False, keepdim = True)
         mean = torch.mean(x, dim = 1, keepdim = True)
         return (x - mean) * (var + eps).rsqrt() * self.g
-        # 沿着通道维度(=1)做 layer norm，并使用g来进行缩放
+        # 沿着通道维度(dim=1)做 layer norm，并使用g来进行缩放
 
+
+# PreNorm是一个 包装器(wrapper)，作用是在执行fn之前进行LayerNorm归一化；
+# fn是个nn.Module（或任意的可调用函数）
 class PreNorm(nn.Module):
     def __init__(self, dim, fn):
         super().__init__()
@@ -242,6 +262,10 @@ class SinusoidalPosEmb(nn.Module):
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
 
         return emb
+# e.g. 对于时间步 x=1   dim = 4
+# emb 会变成类似 [1, 0.1] 的值，因为这是等比数列
+# 则时间步编码为      emb = [[sin(1.0), cos(1.0), sin(0.1), cos(0.1)]
+# 同理时间步为 x=2时  emb = [[sin(1.0), cos(1.0), sin(0.1), cos(0.1)]
 
 class RandomOrLearnedSinusoidalPosEmb(nn.Module):
     """
@@ -273,13 +297,15 @@ class RandomOrLearnedSinusoidalPosEmb(nn.Module):
 
 # building block modules
 
-class Block(nn.Module):
-    def __init__(self, dim, dim_out, groups = 8):
+class Block(nn.Module):  # 标准化投影、分组归一化、缩放偏移 及 激活
+    def __init__(self, dim, dim_out, groups = 8):  # groups = 8 设定 分组归一化 组数
         super().__init__()
         self.proj = WeightStandardizedConv2d(dim, dim_out, 3, padding = 1)
         # self.proj——标准化后的卷积操作
 
         self.norm = nn.GroupNorm(groups, dim_out)
+        # 将dim_out分成groups组，每组内进行归一化操作
+
         self.act = nn.SiLU()
         # 标准化后的卷积 -> GroupNorm -> SiLU激活
 
@@ -290,14 +316,15 @@ class Block(nn.Module):
         if exists(scale_shift):
             scale, shift = scale_shift
             x = x * (scale + 1) + shift
-            # 若从时间嵌入中得到 scale_shift，则对特征图进行缩放和偏移
+            # 这里的scale_shift从 时间嵌入得到，对特征图进行缩放和偏移
 
         x = self.act(x)
         return x  # 输出经过标准化和激活的张量
 
 
-class ResnetBlock(nn.Module):
+class ResnetBlock(nn.Module):  # 包含了时间嵌入信息
     def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8):
+        # “*”表示在此之后的参数只能通过关键字传递
         super().__init__()
         # 如果传入了 time_emb_dim，则对时间嵌入进行线性映射得到 scale 和 shift
         self.mlp = nn.Sequential(
@@ -305,7 +332,7 @@ class ResnetBlock(nn.Module):
             nn.Linear(time_emb_dim, dim_out * 2)
         ) if exists(time_emb_dim) else None
 
-        self.block1 = Block(dim, dim_out, groups = groups)
+        self.block1 = Block(dim, dim_out, groups = groups)  # 标准化投影、分组归一化、缩放偏移 及 激活
         self.block2 = Block(dim_out, dim_out, groups = groups)
         self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
         # 如果 dim != dim_out，就用 1x1 卷积在残差分支中对通道数进行调整
@@ -314,9 +341,9 @@ class ResnetBlock(nn.Module):
         scale_shift = None
         if exists(self.mlp) and exists(time_emb):
             time_emb = self.mlp(time_emb)
-            time_emb = rearrange(time_emb, 'b c -> b c 1 1')
+            time_emb = rearrange(time_emb, 'b c -> b c 1 1')  # 增添2个维度
             scale_shift = time_emb.chunk(2, dim = 1)
-            # 将 time_emb 拆分为 (scale, shift)
+            # 将 time_emb 沿着 dim=1（通道维度）拆分成 两个部分：(scale, shift)
 
         h = self.block1(x, scale_shift = scale_shift)
         h = self.block2(h)
@@ -402,7 +429,7 @@ class Attention(nn.Module):
 class Unet(nn.Module):
     def __init__(self,
                  dim,
-                 init_dim = None,
+                 init_dim = None,  # 实例化的时候默认为64
                  out_dim = None,
                  dim_mults = (1, 2, 4, 8),  #  表示每一层相对于初始维度 dim 的倍数变化
                  channels = 3,
@@ -418,9 +445,11 @@ class Unet(nn.Module):
         init_dim = default(init_dim, dim)
         self.init_conv = nn.Conv2d(channels, init_dim, 7, padding = 3)
         # 输入通道 -> init_dim，使用7*7卷积做初始特征提取
+        # 输入图像 channels通道 输出init_dim通道，图像的尺寸相同
 
         dims = [init_dim, * map(lambda m: dim * m, dim_mults)]
-        # lambda arguments: expression；lambda m: dim * m 是一个匿名函数，它接受一个参数 m，并返回 dim * m 的结果
+        # lambda arguments: expression；
+        # lambda m: dim * m 是一个匿名函数，它接受一个参数 m，并返回 dim * m 的结果
 
         # map将一个函数应用到 列表、元组的每一个元素上
         # map(lambda m: dim * m, dim_mults)：使用map函数和lambda表达式将dim_mults中的每个元素乘以dim，生成新的列表
@@ -449,8 +478,8 @@ class Unet(nn.Module):
         # 根据需要选择使用随机/可学习的正弦嵌入，或使用经典的正弦嵌入
 
         self.time_mlp = nn.Sequential(
-            sinu_pos_emb,
-            nn.Linear(fourier_dim, time_dim),
+            sinu_pos_emb,  # 对时间步进行正余弦编码
+            nn.Linear(fourier_dim, time_dim),  # 正余弦编码后的嵌入向量 通过 一个全连接层（nn.Linear）进行转换
             nn.GELU(),
             nn.Linear(time_dim, time_dim)
         )
@@ -466,7 +495,7 @@ class Unet(nn.Module):
             is_last = ind >= (num_resolutions - 1)  # 判断是否是最后一个分辨率
 
             self.downs.append(nn.ModuleList([
-                block_klass(dim_in, dim_in, time_emb_dim = time_dim),
+                block_klass(dim_in, dim_in, time_emb_dim = time_dim),  # 本质是一个ResnetBlock类（包含时间嵌入类）
                 block_klass(dim_in, dim_in, time_emb_dim = time_dim),
                 Residual(PreNorm(dim_in, LinearAttention(dim_in))),
                 Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(dim_in, dim_out, 3, padding=1)
@@ -554,9 +583,9 @@ class GaussianDiffusion(nn.Module):
     def __init__(
             self,
             model,  # 传入的U-Net模型，用于预测噪声
-            *,
+            *,  # * 强制要求其后的所有参数必须带以 关键字参数（keyword arguments）的方式传递
             image_size,
-            timesteps = 1000,  # 扩散过程的总时间步数
+            timesteps = 1000,  # 扩散过程 或 去噪过程 的总时间步数
             beta_schedule = 'linear',
             auto_normalize = True  # 是否自动将图像[0, 1]归一化到[-1,1]
     ):
@@ -568,41 +597,47 @@ class GaussianDiffusion(nn.Module):
         assert not model.random_or_learned_sinusoidal_cond
         # 不允许网络使用随即或可学习的正弦位置编码
 
-        self.model = model
+        self.model = model  # 噪声预测器
         self.channels = self.model.channels  # 图像的通道，默认为3
 
         self.image_size = image_size  # 保存图像大小
 
         if beta_schedule == 'linear':
             beta_schedule_fn = linear_beta_schedule
+            # beta_schedule_fn 能在[beta_start, beta_end]范围上， 生成timesteps个等差数列。
         else:
             raise  ValueError(f'unknown beta schedule {beta_schedule}')
-        # 根据传入的 beta_schedule 字符串选择 beta 调度函数，目前只支持'linear'，否则抛出异常
+            # 根据传入的 beta_schedule 字符串选择 beta 调度函数，目前只支持'linear'，否则抛出异常
 
         betas = beta_schedule_fn(timesteps)  # 计算在每个时间步上的beta值（线性递增）
 
         alphas = 1. - betas
         # α_t = 1 - β_t
 
-        alphas_cumprod = torch.cumprod(alphas, dim=0)
+        alphas_cumprod = torch.cumprod(alphas, dim=0)  # cumprod是cumulative product
         # 累乘得到 α_1 * α_2 * ... * α_t
+        # e.g. 当a = [a1, a2, a3]  则cumprod(a) = [a1, a1*a2, a1*a2*a3]
 
         alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value = 1.0)
-        # 向前偏移一个时间步，便于在计算 q(x_{t-1}|x_t, x_0) 时使用
-        # 第一个时间步补 1，使 α_cumprod_prev 的长度与 alphas_cumprod 一致
+        # e.g [0.9, 0.72, 0.504]->[1.0, 0.9, 0.72]
+        # F.pad() 是 PyTorch 中用于 填充张量 的函数， (1, 0) 表示在 alphas_cumprod最前面加一个元素，在最后面不加元素
+        # 向前偏移一个时间步，便于在去噪计算 q(x_{t-1}|x_t, x_0) 时使用
+        # 第一个时间步补 1，使 alphas_cumprod_prev 的长度与 alphas_cumprod 一致
 
         timesteps, = betas.shape
-        # 获取时间步数（1000）
+        # betas.shape 是一个元组，例如 (1000,)
+        # 左侧只有一个变量，Python 认为你要解包元组的第一个元素 得到时间步数1000
+
         self.num_timesteps = int(timesteps)
         # 将其保存为整型
 
-        # sampling related parameters
         self.sampling_timesteps = timesteps
         # 采样时使用的步数，默认和训练步数相同
 
-        # helper function to register buffer from float64 to float32
         register_buffer = lambda name, val: self.register_buffer(name, val.to(torch.float32))
+        # lambda name, val: 这是一个匿名函数（lambda 函数），接受两个参数：name(buffer的名字), val(需要注册为buffer的值)
         # 定义一个小函数，用于将各种张量注册为 buffer，并转换为 float32 类型
+        # register_buffer() 是一个模型方法，用于将一个张量注册为 buffer。这个 buffer 会被视为模型的一部分，但并不会成为模型的可训练参数（即不会参与梯度更新）。
 
         register_buffer('betas', betas)
         register_buffer('alphas_cumprod', alphas_cumprod)
@@ -613,37 +648,44 @@ class GaussianDiffusion(nn.Module):
         # calculations for diffusion q(x_t | x_{t-1}) and others
         register_buffer('sqrt_alphas_cumprod', torch.sqrt(alphas_cumprod))
         # sqrt(累乘α_t)
+
         register_buffer('sqrt_one_minus_alphas_cumprod', torch.sqrt(1. - alphas_cumprod))
         # sqrt(1 - 累乘α_t)
+
         register_buffer('log_one_minus_alphas_cumprod', torch.log(1. - alphas_cumprod))
         # 记录 log(1 - 累乘α_t)
+
         register_buffer('sqrt_recip_alphas_cumprod', torch.sqrt(1. / alphas_cumprod))
-        # sqrt(1 / 累乘α_t)
+        # 为了恢复数据，模型需要知道每个时间步的衰减因子，反向过程通常涉及到使用 sqrt(1 / 累乘α_t)  这一比例因子来调整每个时间步的噪声水平
+        # "recip" 是 "reciprocal"（倒数）的缩写
+
         register_buffer('sqrt_recipm1_alphas_cumprod', torch.sqrt(1. / alphas_cumprod - 1))
-        # sqrt(1 / 累乘α_t - 1)
+        # sqrt(1 / (累乘α_t - 1))
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
         posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
         # q(x_{t-1} | x_t, x_0) 的后验方差
-        # 根据公式： posterior_variance_t = β_t * (1 - α_{t-1}累乘) / (1 - α_t累乘)
+        # 根据公式： posterior_variance = (1 - α_{t-1}累乘) / (1 - α_t累乘) * β_t
 
-        # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
-
-        register_buffer('posterior_variance', posterior_variance)
-        # 注册后验方差
+        register_buffer('posterior_variance', posterior_variance)  # 注册后验方差，后验方差是常量
 
         # below: log calculation clipped because the posterior variance is 0 at the beginning of the diffusion chain
         register_buffer('posterior_log_variance_clipped', torch.log(posterior_variance.clamp(min=1e-20)))
-        # 取对数时夹紧最小值防止数值溢出
+        # 计算后验方差的对数值 log(posterior_variance)，并使用 clamp(min=1e-20) 将最小值限制为 1e-20 以防止数值溢出或无穷大的情况发生。
+
+        # 后验均值系数用来调整反向过程中的每个时间步，保证模型在去噪时正确地进行加权。
         register_buffer('posterior_mean_coef1', betas * torch.sqrt(alphas_cumprod_prev) / (1. - alphas_cumprod))
         # 后验均值系数1
+
         register_buffer('posterior_mean_coef2', (1. - alphas_cumprod_prev) * torch.sqrt(alphas) / (1. - alphas_cumprod))
         # 后验均值系数2
 
         # derive loss weight
-        # snr - signal noise ratio
+        # snr —— signal noise ratio（信噪比）
         snr = alphas_cumprod / (1 - alphas_cumprod)
         # SNR = α_t累乘 / (1 - α_t累乘)
+        # alphas_cumprod 是从时间步 t=1到t=T的累积，代表图像在每个时间步的保留；
+        # 随着时间步的增加，alphas_cumprod趋向于0，意味着图像信号的强度减小。
 
         # https://arxiv.org/abs/2303.09556
         maybe_clipped_snr = snr.clone()
@@ -652,15 +694,20 @@ class GaussianDiffusion(nn.Module):
         register_buffer('loss_weight', maybe_clipped_snr / snr)
         # 用于加权损失的系数
 
-        # auto-normalization of data [0, 1] -> [-1, 1] - can turn off by setting it to be False
         self.normalize = normalize_to_neg_one_to_one if auto_normalize else identity
         self.unnormalize = unnormalize_to_zero_to_one if auto_normalize else identity
-        # 根据 auto_normalize 决定是否对数据进行 [-1,1] <-> [0,1] 的转换
+        # 根据 auto_normalize 决定是否对数据进行 [-1,1] <-> [0,1] 的转换（归一化 和 反归一化）
 
     def predict_start_from_noise(self, x_t, t, noise):
         """
         通过 x_t 和噪声，反推 x_0 的预测值
         x_0 = 1 / sqrt(alpha_cumprod) * x_t - sqrt(1 / alpha_cumprod - 1) * noise
+        noise~N(0, I)
+
+        extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape)
+        取出 sqrt(1 / alpha_t)，形状调整为 (batch_size, 1, 1, 1)，让标量变成 可广播的张量，以便对整张图像进行逐像素运算
+
+        x_t.shape = (batch_size, C, H, W)
         """
         return (
                 extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t -
@@ -674,20 +721,22 @@ class GaussianDiffusion(nn.Module):
         """
         return (
                 (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0) / \
-                extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+                extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)  # "/"是除法， "\"是换行符
         )
 
     def q_posterior(self, x_start, x_t, t):
         """
-        计算后验分布 q(x_{t-1} | x_t, x_0) 的均值和方差
+        计算后验分布 q(x_{t-1} | x_t, x_0) 的均值 和 方差（常量）
         """
         posterior_mean = (
                 extract(self.posterior_mean_coef1, t, x_t.shape) * x_start +
                 extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
         )
-        # 后验分布的均值
+        # 后验分布的均值 μ = c1*x0 + c2*xt， 加权平均形式？
+
         posterior_variance = extract(self.posterior_variance, t, x_t.shape)
         # 后验分布的方差
+
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         # 后验分布方差的对数（已做 clip）
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
@@ -696,7 +745,7 @@ class GaussianDiffusion(nn.Module):
         """
         给定当前噪声图 x 和时间步 t，通过模型预测噪声 pred_noise，并得到对 x_0 的估计 x_start
         """
-        model_output = self.model(x, t)
+        model_output = self.model(x, t)  # 这里是调用u-net的前向传播
         # 模型输出，通常是预测噪声
 
         maybe_clip = partial(torch.clamp, min=-1., max=1.) if clip_x_start else identity
@@ -823,6 +872,8 @@ class GaussianDiffusion(nn.Module):
         """
         b, c, h, w = x_start.shape
         noise = default(noise, lambda: torch.randn_like(x_start))
+        # lambda: torch.randn_like(x_start) 是一个匿名函数，作用是生成一个与 x_start 形状相同的随机噪声张量。
+        # orch.randn_like(x_start) 生成的是 标准正态分布 的噪声
 
         # noise sample
         x = self.q_sample(x_start=x_start, t=t, noise=noise)
@@ -887,6 +938,8 @@ class Trainer(object):
         )
         # 使用 accelerate 库加速训练，split_batches 控制是否拆分大 batch，
         # mixed_precision 设为 'no' 表示不使用混合精度
+        # 使用 16-bit 浮动精度 (FP16) 和 32-bit 浮动精度 (FP32) 的组合来加速训练的技术
+        # 通常会用 FP16 来进行某些计算（例如，前向和反向传播中的某些操作），同时保持 FP32 来执行重要的计算（例如，权重更新）。
 
         # model
         self.model = diffusion_model
@@ -1080,7 +1133,7 @@ class Trainer(object):
                     )
         # 该函数主要用于在训练完成后批量生成并保存图像
 
-path = './faces/faces'
+path = '/home/yzyrobot/learning_data/diffusion/archive/faces/faces'
 # 数据所在的文件路径，这里假设所有训练图像都在 ./faces/faces 目录中
 
 IMG_SIZE = 64

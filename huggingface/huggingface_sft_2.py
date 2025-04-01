@@ -86,6 +86,8 @@ peft_config = LoraConfig(
     bias='none',
     task_type='CAUSAL_LM', # 任务类型，Causal LM (自回归语言模型)
     target_modules=['k_proj','v_proj','q_proj'] # 仅对 k_proj、v_proj、q_proj 进行微调
+    # 还可以对 Q K V及FFN进行微调 lora微调参数量占原模型的0.1%~1%
+    # 仅仅对QKV微调7B模型 0.36%
 )
 
 model = get_peft_model(model, peft_config)
