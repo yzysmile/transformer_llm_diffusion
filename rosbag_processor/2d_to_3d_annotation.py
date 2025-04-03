@@ -285,16 +285,35 @@ def main():
         z_index = np.where(whole_points[:, 2] < 7)[0]
         whole_points = whole_points[z_index]
 
-        save_dir = file_path + ('sample_points/')
-        os.makedirs(save_dir, exist_ok=True)
-        np.savez_compressed(os.path.join(save_dir, f"{image_name.split('.')[0]}_{args.idx}.npz"), point_clouds=whole_points)
+        # 可视化点云
+        pred_ground_pcd = o3d.geometry.PointCloud()
+        pred_nonground_pcd = o3d.geometry.PointCloud()
 
+        # 地面点云
+        pred_ground_pcd.points = o3d.utility.Vector3dVector(ground_points[:, :3])
+        pred_ground_pcd.paint_uniform_color([1.0, 0.0, 0.0])  # 红色
+
+        # 非地面点云
+        pred_nonground_pcd.points = o3d.utility.Vector3dVector(nonground_points[:, :3])
+        pred_nonground_pcd.paint_uniform_color([0.0, 0.0, 1.0])  # 蓝色
+
+        # 合并地面和非地面点云
+        combined_pcd = pred_ground_pcd + pred_nonground_pcd
+
+        # 保存为 .ply 文件，以可视化 标注的是否正确
+        save_dir = os.path.join(args.file_path, 'sample_points/')
+        os.makedirs(save_dir, exist_ok=True)
+
+        ply_file_path = os.path.join(save_dir, f"{image_name.split('.')[0]}_{args.idx}.ply")
+        o3d.io.write_point_cloud(ply_file_path, combined_pcd)
+        print(f"Saved point cloud to {ply_file_path}")
+
+        # 保存为 .npz 文件，训练的原始数据
+        np.savez_compressed(os.path.join(save_dir, f"{image_name.split('.')[0]}_{args.idx}.npz"),
+                            point_clouds=whole_points)
 if __name__ == "__main__":
     main()
-    data = np.load('/home/yzyrobot/learning_data/factory_data/extract/rosbag2_2025_03_25-16_54_12/sample_points/1742892865_0.npz')['point_clouds']
     # 查看文件中包含的所有数组名称
     # print(data.files)
-
-    stop = 1
 
 
