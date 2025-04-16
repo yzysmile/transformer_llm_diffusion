@@ -3,33 +3,15 @@ import tensorflow_datasets as tfds
 import os
 import cv2
 from PIL import Image
+import json
 
 # 使用 builder_from_directory 从现有目录构建数据集
-builder_dir = "/home/yzyrobot/Downloads/oxe/cmu_stretch/0.1.0"
+builder_dir = "/home/yzyrobot/Downloads/oxe/data/ucsd_kitchen_dataset_converted_externally_to_rlds/0.1.0"
 builder = tfds.builder_from_directory(builder_dir=builder_dir)
 
 # 加载训练集
 ds = builder.as_dataset(split='train')
-
-# FeaturesDict({
-#     'episode_metadata': FeaturesDict({
-#         'file_path': Text(shape=(), dtype=string),
-#     }),
-#     'steps': Dataset({
-#         'action': Tensor(shape=(8,), dtype=float32, description=Robot action, consists of [3x end effector pos, 3x robot rpy angles, 1x gripper open/close command, 1x terminal action].),
-#         'discount': Scalar(shape=(), dtype=float32, description=Discount if provided, default to 1.),
-#         'is_first': bool,
-#         'is_last': bool,
-#         'is_terminal': bool,
-#         'language_embedding': Tensor(shape=(512,), dtype=float32, description=Kona language embedding. See https://tfhub.dev/google/universal-sentence-encoder-large/5),
-#         'language_instruction': Text(shape=(), dtype=string),
-#         'observation': FeaturesDict({
-#             'image': Image(shape=(128, 128, 3), dtype=uint8, description=Main camera RGB observation.),
-#             'state': Tensor(shape=(7,), dtype=float32, description=Robot state, consists of [3x end effector pos, 3x robot rpy angles, 1x gripper position].),
-#         }),
-#         'reward': Scalar(shape=(), dtype=float32, description=Reward if provided, 1 on final step for demos.),
-#     }),
-# })
+stop = 1
 
 # 遍历数据集并处理每个 episode
 for idx, episode in enumerate(ds):  # 使用 enumerate 获取索引
@@ -60,26 +42,43 @@ for idx, episode in enumerate(ds):  # 使用 enumerate 获取索引
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 使用 MP4 编码
     video_writer = cv2.VideoWriter(video_save_path, fourcc, 30.0, (width, height))  # 30 FPS
 
+    step_data_list = []  # 用于保存每一步的详细数据（可选：存 json）
+
     # 遍历每个 step，将图像添加到视频
-    for step in steps:
-        action = step['action'].numpy()
-        image = step['observation']['image'].numpy()
-        state = step['observation']['state'].numpy()
+    for step_idx, step in enumerate(steps):
+        data = {
+            "step_index": step_idx,
+            "action": step["action"].numpy().tolist(),
+            "discount": float(step["discount"].numpy()),
+            "is_first": bool(step["is_first"].numpy()),
+            "is_last": bool(step["is_last"].numpy()),
+            "is_terminal": bool(step["is_terminal"].numpy()),
+            "language_instruction": step["language_instruction"].numpy().decode(),
+            "language_embedding": step["language_embedding"].numpy().tolist(),
+            "reward": float(step["reward"].numpy()),
+            "observation": {
+                "state": step["observation"]["state"].numpy().tolist(),
+            }
+        }
 
-        # step是一个字典，
-        # key包括"action"、"discount"、"is_first"、'is_last'、'is_terminal'、 'language_embedding'、'language_instruction'、'observation'、'reward'
-        # 'observation'中还有两个key，分别是 'image'、'state'(机器人本体状态， robot joint angles, joint velocity and joint torque)
-        #                                                               [3x end effector pos, 3x robot rpy angles, 1x gripper position]
-
-        # 打印图像形状
-        # print(f"图像形状: {image.shape}")
-
-        # 将图像转换为 RGB 格式（OpenCV 使用 BGR）
+        # 图像单独处理（保存图像或写入视频）
+        image = step["observation"]["image"].numpy()
         image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-        # 写入视频
         video_writer.write(image_bgr)
 
-    # 释放视频写入器
+        # 可选：保存单帧图像
+        img_path = os.path.join(save_folder_path, f"frame_{step_idx:03d}.png")
+        cv2.imwrite(img_path, image_bgr)
+
+        # 添加到数据列表
+        step_data_list.append(data)
+
     video_writer.release()
     print(f"视频已保存到: {video_save_path}")
+
+    # 保存所有 step 的信息为 json（可选）
+    json_path = os.path.join(save_folder_path, f"episode_{idx + 1}_steps.json")
+    with open(json_path, "w") as f:
+        json.dump(step_data_list, f, indent=2)
+
+    print(f"数据已保存到: {json_path}")
