@@ -4,7 +4,8 @@ import torch.nn.functional as F
 import os
 import requests
 import math
-import tiktoken
+import tiktoken  
+# OpenAI提供的一个高效的tokenizer库, 支持OpenAI各种模型的分词规则（如 cl100k_base，p50k_base）
 
 # 超参数
 batch_size = 4
@@ -40,7 +41,7 @@ tokenized_text = encoding.encode(text)
 max_token_value = max(tokenized_text) + 1
 tokenized_text = torch.tensor(tokenized_text, dtype=torch.long, device=device)  # 在device中计算数据类型为long的一维张量
 
-# 将数据划分为 训练集(一维张量) 和 验证集(一维张量)
+# 将数据划分为 训练集(一维张量) 和 验证集(一维张量) 还是整数形式的 token ID，比如： tokenized_text = [123, 456, 789, 101, 202, ...]  # dtype: int
 train_size = int(len(tokenized_text)*0.9)
 train_data = tokenized_text[:train_size]
 valid_data = tokenized_text[train_size:]
@@ -75,7 +76,7 @@ class Attention(nn.Module):
         self.Wk = nn.Linear(in_features=self.d_model, out_features=self.head_size, bias=False)
         self.Wv = nn.Linear(in_features=self.d_model, out_features=self.head_size, bias=False)
         self.register_buffer('tril', torch.tril(  # 缓冲区名称是"tril"
-            torch.ones((self.context_length, self.context_length))))  # 下三角为"1"，上三角位置为"0"的mask(tril是"triangular lower")
+            torch.ones((self.context_length, self.context_length))))  # torch.tril是下三角为"1"，上三角位置为"0"的mask(tril是"triangular lower")
         self.dropout_layer = nn.Dropout(self.dropout)
 
     def forward(self, x):
@@ -92,12 +93,13 @@ class Attention(nn.Module):
         weights = (Q @ K.transpose(-2, -1)) * (1.0 / math.sqrt(K.size(-1)))  # K.size(-1)返回的是K张量的最后一个维度的大小 e.g [4, 16, 64]中的64
         # Apply mask
         weights = weights.masked_fill(self.tril[:T, :T] == 0, float('-inf'))  # 将weights矩阵的上三角位置替换为"-inf"
-        weights = F.softmax(weights, dim=-1)
+        weights = F.softmax(weights, dim=-1)  
+        # weights矩阵的上三角位置变为0，下三角部分有正常数值（加权）；weights[b, t, :]: 表示batch中第b个样本的第t个时间步对前t个token的注意力权重分布
         weights = self.dropout_layer(weights)
 
         #  Apply dot product attention: weights @ V (矩阵点乘)
-        out = weights @ V
-        return out
+        out = weights @ V  # [4, 16, 16](上三角位置为0，下三角部分有正常数值（横向加权）) * [4, 16, 64]
+        return out  # out是每个时间步根据“当前及之前所有位置”的 Value 的加权和
 
 
 # 多头注意力机制
@@ -120,7 +122,7 @@ class MultiHeadAttention(nn.Module):
     def forward(self, x):
         # 在循环中得"h模块"，并将x作为输入传递给"h模块"，得到[h(x), h(x), h(x), ... ,h(x)]
         out = [h(x) for h in self.heads_attention]  # 列表推导式遍历
-        out = torch.cat(out, dim=-1)  # 将[h(x), h(x), h(x), ... ,h(x)]拼起来
+        out = torch.cat(out, dim=-1)  # 将[h(x), h(x), h(x), ... ,h(x)]拼起来后out是一个[4, 16, 64]
         out = self.projection_layer(out)
         out = self.dropout_layer(out)
         return out
@@ -166,6 +168,7 @@ class TransformerLanguageModel(nn.Module):
             [TransformerBlock(num_heads=self.num_heads) for _ in range(self.num_blocks)] +
             [nn.LayerNorm(self.d_model)]
         ))
+
         self.linear_after_transformer_blocks = nn.Linear(d_model, max_token_value)
 
     def forward(self, idx, targets=None):  # 推理时只需要idx(批次*context_length)； 训练时需要idx和target，targets是idx的后错一位
@@ -181,17 +184,35 @@ class TransformerLanguageModel(nn.Module):
 
         position_embedding = position_encoding_lookup_table[:T, :].to(device)
         x = self.token_embedding_lookup_table(idx) + position_embedding  # x维度[4, 16, 64]
-        x = self.transformer_blocks(x)  # e.g x维度为[4, 16, 64]
+        x = self.transformer_blocks(x)  # e.g 输出的x维度为[4, 16, 64]
 
-        logits = self.linear_after_transformer_blocks(x)  # logits维度为[4, 16, max_token_value]，对上下文中的每一个字都要作预测？ 还是 对上下文的下一个字作预测？
-                                                          # 若取值为logits[:, -1, :] 即只是对上下文的下一个字作预测
+        logits = self.linear_after_transformer_blocks(x)  # logits维度为[batch, sequence_length, 词汇表大小]，对上下文中的每一个字都要作预测？ 还是 对上下文整体的下一个字作预测？
+                                                          # 若取值为logits[:, -1, :] 即只是对上下文整体的下一个字作预测
         #  F.softmax(logits, dim=-1)  # 在max_token_value维度上作softmax
 
         if targets is not None:  # 若是训练过程
             B, T, C = logits.shape
-            logits_reshaped = logits.view(B * T, C)  # 使得每一行代表一个预测的概率分布
-            targets_reshaped = targets.view(B * T)  # 使得每个元素表示一个样本的目标类别
-            loss = F.cross_entropy(input=logits_reshaped, target=targets_reshaped)  # F.cross_entropy函数会在内部对输入的概率分布进行softmax操作
+            logits_reshaped = logits.view(B * T, C)  # 使得每一行代表一个预测的概率分布, C是词汇表大小(有c个token id)
+            targets_reshaped = targets.view(B * T)  # T是每个样本在每个时间步的目标token id
+            loss = F.cross_entropy(input=logits_reshaped, target=targets_reshaped)
+            # 模型在训练时是对每个位置的token做预测（即预测该位置后一个token是啥，每一行对应不同的时间步），而不是只对「最后一个 token 后的下一个」
+            # F.cross_entropy函数会在内部对输入的概率分布进行softmax操作 e.g.
+
+            # logits = torch.tensor([[[2.0, 1.0, 0.1],
+            #                         [0.5, 2.5, 0.1]]])  # shape: [1, 2, 3]
+            # targets = torch.tensor([[0, 1]])  # shape: [1, 2]
+
+            # 这个计算了预测 [2.0, 1.0, 0.1] 对应目标 0，以及 [0.5, 2.5, 0.1] 对应目标 1 的平均损失
+            # softmax([2.0, 1.0, 0.1]) ≈ [0.659, 0.242, 0.099]
+            # softmax([0.5, 2.5, 0.1]) ≈ [0.114, 0.843, 0.043]
+            # probs = [
+            #     [0.659, 0.242, 0.099],  # 第一个样本预测每个token的概率
+            #     [0.114, 0.843, 0.043],  # 第二个样本预测每个token的概率
+            # ]
+            # loss_1 = -log(0.659) ≈ 0.417
+            # loss_2 = -log(0.843) ≈ 0.171
+            # loss = (0.417 + 0.171) / 2 ≈ 0.294
+
         else:
             loss = None  # 验证过程
         return logits, loss
@@ -240,6 +261,7 @@ def estimate_loss():  # 在训练集 和 验证集 分别进行losses计算
         out[split] = losses.mean()
     model.train()
     return out
+
 
 # train的过程
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
