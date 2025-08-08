@@ -86,6 +86,7 @@ print(f"model_inputs: {model_inputs}")
 # model_inputs是一个 字典 dict，两个key分别是 "input_ids","attention_mask"
 # 对应的value分别是 text token化后的结果 以及 是否有效的token
 # ids 是指 token IDs，也就是 词汇表（vocabulary）中每个单词或子词的索引
+# "pt" 指定返回的是 PyTorch 的张量（torch.Tensor）
 
 generated_output = model.generate(
     **model_inputs,

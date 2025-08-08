@@ -50,6 +50,8 @@ class VLM(PreTrainedModel):
         self.config = config
         # 模型（Backbone）
         # AutoModel——Transformer 主干（用于特征提取）
+        # AutoModel加载的模型只能接受已经预处理好的输入（比如 token ids、图像张量），不负责原始数据的转换
+
         # AutoModelForCausalLM——自回归语言模型（如 GPT/LLaMA）
         # AutoModelForMaskedLM——掩码语言模型（如 BERT）
         # AutoModelForSeq2SeqLM——序列到序列任务（如 T5、BART 用于翻译、摘要）
@@ -58,7 +60,10 @@ class VLM(PreTrainedModel):
         # AutoTokenizer——用于加载 对应模型的分词器（Tokenizer），可用于文本预处理，将输入文本转换为 input_ids(token)
 
         # 特征提取
-        # AutoProcessor——适用于 图像+文本、语音+文本等多模态任务，同时包含 Tokenizer 和 Feature Extractor
+        # AutoProcessor——适用于 图像+文本、语音+文本等多模态任务，同时包含 Tokenizer 和 Feature Extractor。不需要手动去找对应的 tokenizer、image processor 等类，直接调用 AutoProcessor 就能自动匹配
+        # 但不包含大模型本身
+        # 如果只想用纯文本tokenizer，也可以直接用AutoTokenizer，但多模态模型就用 AutoProcessor 更方便。
+
         # AutoImageProcessor——专门用于计算机视觉任务，如 ViT、DETR
 
         # 模型配置

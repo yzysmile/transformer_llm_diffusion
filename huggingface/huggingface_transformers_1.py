@@ -62,7 +62,7 @@ print(f"output:{output}")
 
 prompt = "The capital of France is"
 # model包含3个重要的方法，包含 “.generate”、“.model”、“.lm_head”
-# .generate：让模型 迭代预测下一个 token 直到 max_length 或 EOS（结束标记）
+# .generate:让模型 迭代预测下一个 token 直到 max_length 或 EOS（结束标记）
 # .model: 用于提取 隐藏状态 (hidden states)
 # .lm_head: 语言模型的输出层，它把 hidden_states 转换为词汇表概率 （即 vocab_size 维度）。
 
