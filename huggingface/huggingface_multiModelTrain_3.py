@@ -84,6 +84,7 @@ class VLM(PreTrainedModel):
         self.linear1 = nn.Linear(self.vision_model.config.vision_config.hidden_size * 4,
                                  self.llm_model.config.hidden_size)
         self.linear2 = nn.Linear(self.llm_model.config.hidden_size, self.llm_model.config.hidden_size)
+        
         if self.config.freeze_vision_model:
             for param in self.vision_model.parameters():
                 param.requires_grad = False # 冻结 vision_model，避免调整其权重

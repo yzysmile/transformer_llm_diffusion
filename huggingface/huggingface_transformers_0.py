@@ -59,7 +59,7 @@ messages = [
 # 在做instruct tuning的时候，要把sft的数据构造成 模板的形式
 text = tokenizer.apply_chat_template(
     messages,
-    tokenizer=False, # 为False时， message不会进行tokenization
+    tokenizer=False, # 为False时， message不会进行tokenization 只是把对话转变为 符合要求的对话格式
     add_generation_prompt=True  # 最后多出 "<|assistant|>\n"，模型知道要在这个地方开始生成。
 )
 # 如果 text 是 token ID（list），则尝试解码回字符串

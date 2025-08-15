@@ -116,7 +116,7 @@ training_config = SFTConfig(
 
 trainer = SFTTrainer(
     model=model,
-    args=training_config,  # ✅ 使用 SFTConfig
+    args=training_config,  # 使用 SFTConfig
     dataset_text_field="text",
     train_dataset=dataset,
     tokenizer=tokenizer,
